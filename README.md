@@ -28,4 +28,4 @@ Download the `checkpoint_final.pth` file from [BaiduNetDisk](https://pan.baidu.c
 sh predict.sh
 ```
 
-This will generate the output in the specified output directory.
+This will generate the output in the `./outputs` directory.
