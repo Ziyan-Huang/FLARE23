@@ -6,7 +6,7 @@ This repository contains our solution for the FLARE23 challenge, based on nnU-Ne
 
 Our approach employs a two-stage pseudo-labeling method to tackle the issue of partial labels for organs and tumors in the FLARE23 dataset. For more details, see the pipeline diagram below:
 
-![Pipeline Diagram](./assets/pipeline.png)
+<img src="./assets/pipeline.png" alt="Pipeline" width="600"/>
 
 Additionally, we present a speed comparison for inference, both before and after optimizations on nnU-Netv2. The following diagram illustrates the improvements:
 
