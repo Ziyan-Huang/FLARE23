@@ -56,6 +56,37 @@ def preprocess_fromfiles_save_to_queue(list_of_lists: List[List[str]],
         abort_event.set()
         raise e
 
+def preprocessing_iterator_fromfiles_single_thread(list_of_lists: List[List[str]],
+                                                   list_of_segs_from_prev_stage_files: Union[None, List[str]],
+                                                   output_filenames_truncated: Union[None, List[str]],
+                                                   plans_manager: PlansManager,
+                                                   dataset_json: dict,
+                                                   configuration_manager: ConfigurationManager,
+                                                   pin_memory: bool = False,
+                                                   verbose: bool = False):
+
+    label_manager = plans_manager.get_label_manager(dataset_json)
+    preprocessor = configuration_manager.preprocessor_class(verbose=verbose)
+
+    for idx in range(len(list_of_lists)):
+        data, seg, data_properites = preprocessor.run_case(list_of_lists[idx],
+                                                           list_of_segs_from_prev_stage_files[idx] if list_of_segs_from_prev_stage_files else None,
+                                                           plans_manager,
+                                                           configuration_manager,
+                                                           dataset_json)
+        if list_of_segs_from_prev_stage_files and list_of_segs_from_prev_stage_files[idx]:
+            seg_onehot = convert_labelmap_to_one_hot(seg[0], label_manager.foreground_labels, data.dtype)
+            data = np.vstack((data, seg_onehot))
+
+        data = torch.from_numpy(data).contiguous().float()
+
+        item = {'data': data, 'data_properites': data_properites,
+                'ofile': output_filenames_truncated[idx] if output_filenames_truncated else None}
+
+        # if pin_memory:
+        #     [i.pin_memory() for i in item.values() if isinstance(i, torch.Tensor)]
+        yield item
+
 
 def preprocessing_iterator_fromfiles(list_of_lists: List[List[str]],
                                      list_of_segs_from_prev_stage_files: Union[None, List[str]],

@@ -26,7 +26,7 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     start_time =  time.time()
     segmentation = label_manager.convert_probabilities_to_segmentation(predicted_logits)
     end_time =  time.time()
-    print(f"\t probabilities_to_segmentation 的执行时间为: {end_time - start_time} 秒")
+    print(f"\t Time for convert logits to seg: {end_time - start_time} seconds")
 
     # resample to original shape
     current_spacing = configuration_manager.spacing if \
@@ -59,7 +59,7 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     segmentation = segmentation.squeeze(0)
 
     end_time =  time.time()
-    print(f"\t resample seg 的执行时间为: {end_time - start_time} 秒")
+    print(f"\t Time for resample seg: {end_time - start_time} seconds")
     # return value of resampling_fn_probabilities can be ndarray or Tensor but that doesnt matter because
     # apply_inference_nonlin will covnert to torch
     # start_time =  time.time()
@@ -75,14 +75,12 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     # segmentation may be torch.Tensor but we continue with numpy
     if isinstance(segmentation, torch.Tensor):
         segmentation = segmentation.cpu().numpy()
-    start_time =  time.time()
     # put segmentation in bbox (revert cropping)
-    segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
-                                              dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
-    slicer = bounding_box_to_slice(properties_dict['bbox_used_for_cropping'])
-    segmentation_reverted_cropping[slicer] = segmentation
-    end_time =  time.time()
-    print(f"\t revert cropping 的执行时间为: {end_time - start_time} 秒")
+    # segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
+    #                                           dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
+    # slicer = bounding_box_to_slice(properties_dict['bbox_used_for_cropping'])
+    # segmentation_reverted_cropping[slicer] = segmentation
+    segmentation_reverted_cropping = segmentation
     del segmentation
 
     # revert transpose
@@ -117,6 +115,7 @@ def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, tor
     #     elif predicted_array_or_file.endswith('.npz'):
     #         predicted_array_or_file = np.load(predicted_array_or_file)['softmax']
     #     os.remove(tmp)
+    print('Exporting logits...')
     export_start_time = time.time()
     if isinstance(dataset_json_dict_or_file, str):
         dataset_json_dict_or_file = load_json(dataset_json_dict_or_file)
@@ -143,9 +142,9 @@ def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, tor
     rw.write_seg(segmentation_final, output_file_truncated + dataset_json_dict_or_file['file_ending'],
                  properties_dict)
     end_time = time.time()
-    print(f"\t write seg 的执行时间为: {end_time - start_time} 秒")
+    print(f"\t Time for write seg: {end_time - start_time} seconds")
     export_end_time = time.time()
-    print(f"export prediction from logits 的执行时间为: {export_end_time - export_start_time} 秒")
+    print(f"Total time for export logits to seg: {export_end_time - export_start_time} seconds")
 
 
 def resample_and_save(predicted: Union[torch.Tensor, np.ndarray], target_shape: List[int], output_file: str,

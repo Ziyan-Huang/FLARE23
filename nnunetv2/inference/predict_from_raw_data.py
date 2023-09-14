@@ -20,7 +20,7 @@ from tqdm import tqdm
 import nnunetv2
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy, preprocessing_iterator_fromfiles, \
-    preprocessing_iterator_fromnpy
+    preprocessing_iterator_fromnpy, preprocessing_iterator_fromfiles_single_thread
 from nnunetv2.inference.export_prediction import export_prediction_from_logits, \
     convert_predicted_logits_to_segmentation_with_correct_shape
 from nnunetv2.inference.sliding_window_prediction import compute_gaussian, \
@@ -71,6 +71,7 @@ class nnUNetPredictor(object):
         """
         This is used when making predictions with a trained model
         """
+        print('Initializing...')
         start_time = time.time()
         if use_folds is None:
             use_folds = nnUNetPredictor.auto_detect_available_folds(model_training_output_dir, checkpoint_name)
@@ -83,10 +84,14 @@ class nnUNetPredictor(object):
             use_folds = [use_folds]
 
         parameters = []
+        total_time_for_checkpoints = 0
         for i, f in enumerate(use_folds):
             f = int(f) if f != 'all' else f
+            start_load_checkpoint = time.time()
             checkpoint = torch.load(join(model_training_output_dir, f'fold_{f}', checkpoint_name),
                                     map_location=torch.device('cpu'))
+            end_load_checkpoint = time.time()
+            total_time_for_checkpoints += (end_load_checkpoint - start_load_checkpoint)
             if i == 0:
                 trainer_name = checkpoint['trainer_name']
                 configuration_name = checkpoint['init_args']['configuration']
@@ -94,14 +99,20 @@ class nnUNetPredictor(object):
                     'inference_allowed_mirroring_axes' in checkpoint.keys() else None
 
             parameters.append(checkpoint['network_weights'])
+        print(f"\t Time for loading checkpoints: {total_time_for_checkpoints} seconds")
+
+        start_build_network = time.time()
 
         configuration_manager = plans_manager.get_configuration(configuration_name)
+        
         # restore network
         num_input_channels = determine_num_input_channels(plans_manager, configuration_manager, dataset_json)
         trainer_class = recursive_find_python_class(join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
                                                     trainer_name, 'nnunetv2.training.nnUNetTrainer')
         network = trainer_class.build_network_architecture(plans_manager, dataset_json, configuration_manager,
                                                            num_input_channels, enable_deep_supervision=False)
+        end_build_network = time.time()
+        print(f"\t Time for building network architecture: {end_build_network - start_build_network} seconds")
         self.plans_manager = plans_manager
         self.configuration_manager = configuration_manager
         self.list_of_parameters = parameters
@@ -115,7 +126,7 @@ class nnUNetPredictor(object):
             print('compiling network')
             self.network = torch.compile(self.network)
         end_time = time.time()
-        print(f"initialize 的执行时间为: {end_time - start_time} 秒")
+        print(f"Total time for initialize: {end_time - start_time} seconds\n")
 
     def manual_initialization(self, network: nn.Module, plans_manager: PlansManager,
                               configuration_manager: ConfigurationManager, parameters: Optional[List[dict]],
@@ -158,7 +169,6 @@ class nnUNetPredictor(object):
                                        part_id: int = 0,
                                        num_parts: int = 1,
                                        save_probabilities: bool = False):
-        start_time = time.time()
         if isinstance(list_of_lists_or_source_folder, str):
             list_of_lists_or_source_folder = create_lists_from_splitted_dataset_folder(list_of_lists_or_source_folder,
                                                                                        self.dataset_json['file_ending'])
@@ -189,9 +199,7 @@ class nnUNetPredictor(object):
             list_of_lists_or_source_folder = [list_of_lists_or_source_folder[i] for i in not_existing_indices]
             seg_from_prev_stage_files = [seg_from_prev_stage_files[i] for i in not_existing_indices]
             print(f'overwrite was set to {overwrite}, so I am only working on cases that haven\'t been predicted yet. '
-                  f'That\'s {len(not_existing_indices)} cases.')
-        end_time = time.time()
-        print(f"manage io files 的执行时间为: {end_time - start_time} 秒")
+                  f'That\'s {len(not_existing_indices)} cases.')      
         return list_of_lists_or_source_folder, output_filename_truncated, seg_from_prev_stage_files
 
     def predict_from_files(self,
@@ -252,8 +260,12 @@ class nnUNetPredictor(object):
                                                                                  seg_from_prev_stage_files,
                                                                                  output_filename_truncated,
                                                                                  num_processes_preprocessing)
+        
+        result  =  self.predict_from_data_iterator(data_iterator, save_probabilities, num_processes_segmentation_export)
+        # result  =  self.predict_from_data_iterator_single_thread(data_iterator, save_probabilities, num_processes_segmentation_export)
 
-        return self.predict_from_data_iterator(data_iterator, save_probabilities, num_processes_segmentation_export)
+
+        return result 
 
     def _internal_get_data_iterator_from_lists_of_filenames(self,
                                                             input_list_of_lists: List[List[str]],
@@ -264,6 +276,12 @@ class nnUNetPredictor(object):
                                                 output_filenames_truncated, self.plans_manager, self.dataset_json,
                                                 self.configuration_manager, num_processes, self.device.type == 'cuda',
                                                 self.verbose_preprocessing)
+
+        # return preprocessing_iterator_fromfiles_single_thread(input_list_of_lists, seg_from_prev_stage_files,
+        #                                                   output_filenames_truncated, self.plans_manager, 
+        #                                                   self.dataset_json, self.configuration_manager, 
+        #                                                   self.device.type == 'cuda', self.verbose_preprocessing)
+
         # preprocessor = self.configuration_manager.preprocessor_class(verbose=self.verbose_preprocessing)
         # # hijack batchgenerators, yo
         # # we use the multiprocessing of the batchgenerators dataloader to handle all the background worker stuff. This
@@ -335,6 +353,55 @@ class nnUNetPredictor(object):
                                                             num_processes)
         return self.predict_from_data_iterator(iterator, save_probabilities, num_processes_segmentation_export)
 
+    def predict_from_data_iterator_single_thread(self, data_iterator, save_probabilities: bool = False, num_processes_segmentation_export: int = default_num_processes):
+        """
+        Each element returned by data_iterator must be a dict with 'data', 'ofile' and 'data_properites' keys!
+        If 'ofile' is None, the result will be returned instead of written to a file
+        """
+        
+        ret = []
+        for preprocessed in data_iterator:
+            data = preprocessed['data']
+            if isinstance(data, str):
+                delfile = data
+                data = torch.from_numpy(np.load(data))
+                os.remove(delfile)
+
+            ofile = preprocessed['ofile']
+            if ofile is not None:
+                print(f'\nPredicting {os.path.basename(ofile)}:')
+            else:
+                print(f'\nPredicting image of shape {data.shape}:')
+
+            print(f'perform_everything_on_gpu: {self.perform_everything_on_gpu}')
+
+            properties = preprocessed['data_properites']
+
+            start_prediction = time.time()
+            prediction = self.predict_logits_from_preprocessed_data(data).cpu()
+            end_prediction = time.time()
+            print(f"Total time for prediction: {end_prediction - start_prediction} seconds")
+
+            if ofile is not None:
+                # this is now run in the main thread
+                result = export_prediction_from_logits(prediction, properties, self.configuration_manager, self.plans_manager, self.dataset_json, ofile, save_probabilities)
+                print('done with prediction export')
+            else:
+                # this is now run in the main thread
+                result = convert_predicted_logits_to_segmentation_with_correct_shape(prediction, self.plans_manager, self.configuration_manager, self.label_manager, properties, save_probabilities)
+                print('done with prediction conversion')
+
+            ret.append(result)
+            if ofile is not None:
+                print(f'done with {os.path.basename(ofile)}')
+            else:
+                print(f'\nDone with image of shape {data.shape}:')
+
+        if isinstance(data_iterator, MultiThreadedAugmenter):
+            data_iterator._finish()
+        
+        return ret
+
     def predict_from_data_iterator(self,
                                    data_iterator,
                                    save_probabilities: bool = False,
@@ -371,7 +438,10 @@ class nnUNetPredictor(object):
                     sleep(0.1)
                     proceed = not check_workers_alive_and_busy(export_pool, worker_list, r, allowed_num_queued=2)
 
+                start_prediction = time.time()
                 prediction = self.predict_logits_from_preprocessed_data(data).cpu()
+                end_prediction = time.time()
+                print(f"Total time for prediction: {end_prediction - start_prediction} seconds")
 
                 if ofile is not None:
                     # this needs to go into background processes
@@ -414,6 +484,9 @@ class nnUNetPredictor(object):
         # clear device cache
         empty_cache(self.device)
         return ret
+    
+
+
 
     def predict_single_npy_array(self, input_image: np.ndarray, image_properties: dict,
                                  segmentation_previous_stage: np.ndarray = None,
@@ -475,14 +548,9 @@ class nnUNetPredictor(object):
                             self.network.load_state_dict(params)
                         else:
                             self.network._orig_mod.load_state_dict(params)
-
-                        
+                   
                         if prediction is None:
-                            start_time = time.time()
                             prediction = self.predict_sliding_window_return_logits(data)
-                            end_time = time.time()
-                            print(f"predict return logits 的执行时间为: {end_time - start_time} 秒")
-
                         else:
                             prediction += self.predict_sliding_window_return_logits(data)            
                     
@@ -511,11 +579,9 @@ class nnUNetPredictor(object):
                         prediction += self.predict_sliding_window_return_logits(data)
                 if len(self.list_of_parameters) > 1:
                     prediction /= len(self.list_of_parameters)
-            start_time = time.time()
-            print('Prediction done, transferring to CPU if needed')
-            # prediction = prediction.to('cpu')
-            end_time = time.time()
-            print(f"transfer logits to cpu 的执行时间为: {end_time - start_time} 秒")
+
+            prediction = prediction.to('cpu')
+        
             self.perform_everything_on_gpu = original_perform_everything_on_gpu
         return prediction
 
@@ -564,8 +630,8 @@ class nnUNetPredictor(object):
             center_start = image_size[dim] // 2 - self.configuration_manager.patch_size[dim] // 2
             
             # Boundary checks
-            first_patch_start = max(0, center_start - self.configuration_manager.patch_size[dim]//2)
-            third_patch_start = min(image_size[dim] - self.configuration_manager.patch_size[dim], center_start + self.configuration_manager.patch_size[dim]//2)
+            first_patch_start = max(0, center_start - self.configuration_manager.patch_size[dim]//3)
+            third_patch_start = min(image_size[dim] - self.configuration_manager.patch_size[dim], center_start + self.configuration_manager.patch_size[dim]//3)
             
             if dim == 1:
                 y_steps = [first_patch_start, center_start, third_patch_start]
@@ -574,8 +640,12 @@ class nnUNetPredictor(object):
 
         # Construct slicers using the steps
         for sx in x_steps:
+            # Add the center combination for yz plane first
+            slicers.append(tuple([slice(None), *[slice(si, si + ti) for si, ti in zip((sx, y_steps[1], z_steps[1]), self.configuration_manager.patch_size)]]))
             for sy in y_steps:
                 for sz in z_steps:
+                    if sy == y_steps[1] and sz == z_steps[1]:
+                        continue
                     slicers.append(
                         tuple([slice(None), *[slice(si, si + ti) for si, ti in zip((sx, sy, sz), self.configuration_manager.patch_size)]]))
 
@@ -674,11 +744,35 @@ class nnUNetPredictor(object):
                     empty_cache(self.device)
 
                 if self.verbose: print('running prediction')
+
+                slicer_count = 0  # 计数器来跟踪当前处理的slicer
+                skipped = 0  # 用来跟踪我们跳过的slicer数量
+
                 for sl in tqdm(slicers, disable=not self.allow_tqdm):
+                    slicer_count += 1
+
+                    if skipped > 0:
+                        skipped -= 1
+                        continue
+
                     workon = data[sl][None]
                     workon = workon.to(self.device, non_blocking=False)
 
                     prediction = self._internal_maybe_mirror_and_predict(workon)[0].to(results_device)
+
+                    # 如果当前是正中间的slicer（由计数器判断）
+                    if slicer_count % 9 == 1:
+                        # 检查指定的边缘区域
+                        edges = [
+                            prediction[:,:, 0:1, :],
+                            prediction[:,:, -1:, :],
+                            prediction[:,:, :, -1:],
+                            prediction[:,:, :, 0:1]
+                        ]
+                        foreground_present = any([torch.any(torch.argmax(edge, 0) > 0) for edge in edges])
+                        if not foreground_present:
+                            print('skipped 8 slicer')
+                            skipped = 8
 
                     predicted_logits[sl] += (prediction * gaussian if self.use_gaussian else prediction)
                     n_predictions[sl[1:]] += (gaussian if self.use_gaussian else 1)
@@ -776,10 +870,9 @@ def predict_entry_point_modelfolder():
                                  num_processes_segmentation_export=args.nps,
                                  folder_with_segs_from_prev_stage=args.prev_stage_predictions,
                                  num_parts=1, part_id=0)
+
     end_time = time.time()
-    print(f"\npredict 整体的执行时间为: {end_time - start_time} 秒")
-
-
+    print(f"\nTotal time for the whole prediction procedure: {end_time - start_time} seconds")  
 
 def predict_entry_point():
     import argparse

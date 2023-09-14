@@ -44,23 +44,23 @@ class DefaultPreprocessor(object):
                      plans_manager: PlansManager, configuration_manager: ConfigurationManager,
                      dataset_json: Union[dict, str]):
         # let's not mess up the inputs!
+        start_time = time.time()
         data = np.copy(data)
+        end_time = time.time()
+        print(f"\t Time for copy data: {end_time - start_time} seconds")
+
         if seg is not None:
             seg = np.copy(seg)
 
         has_seg = seg is not None
 
         # apply transpose_forward, this also needs to be applied to the spacing!
-        start_time = time.time()
         data = data.transpose([0, *[i + 1 for i in plans_manager.transpose_forward]])
         if seg is not None:
             seg = seg.transpose([0, *[i + 1 for i in plans_manager.transpose_forward]])
         original_spacing = [properties['spacing'][i] for i in plans_manager.transpose_forward]
-        end_time = time.time()
-        print(f"\t transpose img 的执行时间为: {end_time - start_time} 秒")
 
         # crop, remember to store size before cropping!
-        start_time = time.time()
         shape_before_cropping = data.shape[1:]
         properties['shape_before_cropping'] = shape_before_cropping
         # this command will generate a segmentation. This is important because of the nonzero mask which we may need
@@ -73,9 +73,7 @@ class DefaultPreprocessor(object):
         properties['bbox_used_for_cropping'] = bbox
         # print(data.shape, seg.shape)
         properties['shape_after_cropping_and_before_resampling'] = data.shape[1:]
-        end_time = time.time()
-        print(f"\t crop img 的执行时间为: {end_time - start_time} 秒")
-
+       
         # resample
         target_spacing = configuration_manager.spacing  # this should already be transposed
 
@@ -92,7 +90,7 @@ class DefaultPreprocessor(object):
         data = self._normalize(data, seg, configuration_manager,
                                plans_manager.foreground_intensity_properties_per_channel)
         end_time = time.time()
-        print(f"\t normalize img 的执行时间为: {end_time - start_time} 秒")
+        print(f"\t Time for normalize: {end_time - start_time} seconds")
 
         # print('current shape', data.shape[1:], 'current_spacing', original_spacing,
         #       '\ntarget shape', new_shape, 'target_spacing', target_spacing)
@@ -108,12 +106,9 @@ class DefaultPreprocessor(object):
         data = torch.nn.functional.interpolate(data, tuple(new_shape), mode='trilinear', align_corners=False)
         data = data.squeeze(0).numpy()
         end_time = time.time()
-        print(f"\t resample img 的执行时间为: {end_time - start_time} 秒")
+        print(f"\t Time for resample image: {end_time - start_time} seconds")
 
-        start_time = time.time()
         # seg = configuration_manager.resampling_fn_seg(seg, new_shape, original_spacing, target_spacing)
-        end_time = time.time()
-        print(f"\t resample seg 的执行时间为: {end_time - start_time} 秒")
         if self.verbose:
             print(f'old shape: {old_shape}, new_shape: {new_shape}, old_spacing: {original_spacing}, '
                   f'new_spacing: {target_spacing}, fn_data: {configuration_manager.resampling_fn_data}')
@@ -154,6 +149,8 @@ class DefaultPreprocessor(object):
         so when we export we need to run the following order: resample -> crop -> transpose (we could also run
         transpose at a different place, but reverting the order of operations done during preprocessing seems cleaner)
         """
+        run_case_start_time = time.time()
+        print('\nPreprocessing...')
         if isinstance(dataset_json, str):
             dataset_json = load_json(dataset_json)
 
@@ -163,19 +160,18 @@ class DefaultPreprocessor(object):
         start_time = time.time()
         data, data_properites = rw.read_images(image_files)
         end_time = time.time()
-        print(f"read_images 的执行时间为: {end_time - start_time} 秒")
+        print(f"\t Time for read image: {end_time - start_time} seconds")
 
         # if possible, load seg
         if seg_file is not None:
             seg, _ = rw.read_seg(seg_file)
         else:
             seg = None
-
-        start_time = time.time()
+        
         data, seg = self.run_case_npy(data, seg, data_properites, plans_manager, configuration_manager,
                                       dataset_json)
-        end_time = time.time()
-        print(f"run_case_npy 的执行时间为: {end_time - start_time} 秒")
+        run_case_end_time = time.time()
+        print(f"Total time for preprocess: {run_case_end_time - run_case_start_time} seconds")
         return data, seg, data_properites
     
     def run_case_save(self, output_filename_truncated: str, image_files: List[str], seg_file: str,
