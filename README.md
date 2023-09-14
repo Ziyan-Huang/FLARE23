@@ -10,7 +10,7 @@ Our approach employs a two-stage pseudo-labeling method to tackle the issue of p
 
 Additionally, we present a speed comparison for inference, both before and after optimizations on nnU-Netv2. The following diagram illustrates the improvements:
 
-![Efficiency Comparison](./assets/efficiency.png)
+<img src="./assets/efficiency.png" alt="Efficiency Comparison" width="600"/>
 
 ## ⚙️ Environment Setup
 
