@@ -2,6 +2,9 @@
 
 This repository contains our solution for the FLARE23 challenge, based on nnU-Netv2.
 
+For a detailed explanation of our specific methods and approaches, you can refer to our paper:
+[Exploiting Pseudo-Labeling and nnU-Netv2 Inference Acceleration for Abdominal Multi-Organ and Pan-Cancer Segmentation.](https://openreview.net/forum?id=vGHEN7XAdB)
+
 ## 🔍 Overview
 
 Our approach employs a two-stage pseudo-labeling method to tackle the issue of partial labels for organs and tumors in the FLARE23 dataset. For more details, see the pipeline diagram below:
