@@ -70,7 +70,7 @@ nnUNetv2_train TASK_ID 3d_fullres all -tr STUNetTrainer_base
 
 ## ⬇️ Download Checkpoints
 
-Download the `checkpoint_final.pth` file from [BaiduNetDisk](https://pan.baidu.com/s/1Nt_ZD2lyp4mS9UA5Xeajuw?pwd=jip3). Place it in the `./model/fold_all/` directory.
+Download the `checkpoint_final.pth` file from [BaiduNetDisk](https://pan.baidu.com/s/1Nt_ZD2lyp4mS9UA5Xeajuw?pwd=jip3) or [Google Drive](https://drive.google.com/drive/folders/1EpEfO9iz3a2NaCzE6FruD9dw2nCO91_q). Place it in the `./model/fold_all/` directory.
 
 ## 🚀 Inference
 
